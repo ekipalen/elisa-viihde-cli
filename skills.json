@@ -1,0 +1,11 @@
+{
+  "skills": [
+    {
+      "name": "elisa-viihde",
+      "path": "skills/elisa-viihde",
+      "description": "Use the Elisa Viihde CLI to browse TV guide, search programs, manage recordings, and record programs.",
+      "requiredBins": ["node"],
+      "configPaths": ["~/.config/elisa-viihde"]
+    }
+  ]
+}

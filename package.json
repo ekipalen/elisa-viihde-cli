@@ -1,0 +1,21 @@
+{
+  "name": "elisa-viihde-cli",
+  "version": "0.2.0",
+  "description": "Unofficial CLI tool for Elisa Viihde. Not affiliated with or endorsed by Elisa.",
+  "type": "module",
+  "bin": {
+    "elisa": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^22.0.0"
+  }
+}
