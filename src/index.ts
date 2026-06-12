@@ -4,7 +4,7 @@ import readline from "node:readline";
 import { authenticate, AuthenticationError } from "./auth.js";
 import {
   ElisaViihdeClient, RecordingConflictError, SCRAMBLED_CHANNEL_IDS,
-  type Recording, type EpgProgram,
+  type Recording, type EpgProgram, type SearchHit,
 } from "./client.js";
 import { loadConfig, saveConfig, loadSession, saveSession, clearConfig, clearSession } from "./config.js";
 
@@ -24,11 +24,13 @@ Examples:
   elisa recordings poirot         Any Poirot recordings saved?
   elisa recordings movies         What movies have been recorded?
   elisa scheduled today           What's being recorded today?
+  elisa jalkapallo                Football matches on TV tonight & overnight
 
 Commands:
 
   guide       TV guide: what's on today/tomorrow
   search      Search: find upcoming programs by name (~2 weeks)
+  jalkapallo  Football: match broadcasts tonight/overnight (alias: football)
   record      Record: schedule a program for recording (needs ID)
   recordings  My recordings: search saved recordings
   scheduled   Scheduled: upcoming recordings that are set to record
@@ -40,6 +42,7 @@ Commands:
   cancel <recordingId>                 Cancel a recording
   recordings <query|movies>            Search saved recordings
   scheduled [today|tomorrow]           Upcoming scheduled recordings
+  jalkapallo [ilta|today|tomorrow|all] Football match broadcasts in a time window
 
   login [--save]                       Log in (--save stores credentials)
   logout                               Log out
@@ -191,6 +194,19 @@ function helsinkiDay(offsetDays: number): { start: Date; end: Date } {
   return { start, end: new Date(start.getTime() + 86400000) };
 }
 
+/** Epoch seconds for a given clock time (hour:00) on the Helsinki day `offsetDays` from today. */
+function helsinkiClockSec(offsetDays: number, hour: number): number {
+  const dateStr = new Date(Date.now() + offsetDays * 86400000).toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" });
+  const hh = String(hour).padStart(2, "0");
+  for (const off of [2, 3]) {
+    const attempt = new Date(`${dateStr}T${hh}:00:00+0${off}:00`);
+    if (attempt.toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" }) === dateStr) {
+      return Math.floor(attempt.getTime() / 1000);
+    }
+  }
+  return Math.floor(new Date(`${dateStr}T${hh}:00:00+03:00`).getTime() / 1000);
+}
+
 /** Resolve "today", "tomorrow", or YYYY-MM-DD to a date string. */
 function resolveDate(input: string): string {
   if (input === "today" || !input) {
@@ -312,6 +328,95 @@ async function main(): Promise<void> {
             if (hit.description) console.log(`  ${hit.description.slice(0, 120)}`);
           }
           console.log(`\n${results.length} result(s)`);
+        }
+        break;
+      }
+
+      case "football":
+      case "jalkapallo": {
+        const client = requireSession();
+
+        // The search API hard-caps at 5 hits per query, so we run several
+        // football-related queries and merge the unique results. Match
+        // broadcasts ("Team - Team") often lack the word "jalkapallo", so
+        // tournament/league keywords are needed to catch them.
+        const KEYWORDS = [
+          "jalkapallo", "FIFA", "World Cup",
+          "Valioliiga", "Mestarien liiga", "Veikkausliiga", "Champions League",
+        ];
+        const byId = new Map<number, SearchHit>();
+        await Promise.all(KEYWORDS.map(async (kw) => {
+          try {
+            for (const h of await client.search(kw, 5)) {
+              const id = h.id ?? (h.programId as number | undefined);
+              if (typeof id === "number" && !byId.has(id)) byId.set(id, h);
+            }
+          } catch { /* ignore a failing keyword, keep the rest */ }
+        }));
+
+        // Drop hits that match a football keyword but are not football, e.g.
+        // equestrian "Global Champions League" on HorseTV.
+        const NOT_FOOTBALL = /global champions league|ratsastus|hevos|formula|nascar|esports|football manager/i;
+
+        // Classify: a real match has a "Team - Team" / "Team vs Team" title and
+        // is not a studio/highlights/magazine/preview programme.
+        const STUDIO = /studio|huippuhetk|kooste|tarinoita|makasiini|magazine|highlights|review|goals of|stories|enn?akko|lähetys ennen|tältä tuntuu/i;
+        const VERSUS = / [-–] | vs\.? /i;
+        const category = (t: string): "ottelu" | "studio" | "muu" =>
+          STUDIO.test(t) ? "studio" : VERSUS.test(t) ? "ottelu" : "muu";
+
+        // Time window. A football "day" runs from 00:00 until 06:00 the NEXT
+        // morning, so matches that kick off in the small hours (e.g. 03:35,
+        // tournament in the US → late night Finnish time) count as part of that
+        // evening's football — they appear under "today" even though their
+        // calendar date is tomorrow.
+        const OVERNIGHT_END = 6; // 06:00 = end of the small hours
+        const nowSec = Math.floor(Date.now() / 1000);
+        const win = subcommand || "today";
+        let lo: number, hi: number;
+        if (win === "all" || win === "week" || win === "kaikki") {
+          lo = nowSec - 3 * 3600; hi = nowSec + 14 * 86400;
+        } else if (win === "tomorrow" || win === "huomenna") {
+          lo = helsinkiClockSec(1, 0); hi = helsinkiClockSec(2, OVERNIGHT_END);
+        } else {
+          // default / "today" / "tänään" / "ilta": today + overnight into tomorrow morning
+          lo = helsinkiClockSec(0, 0); hi = helsinkiClockSec(1, OVERNIGHT_END);
+        }
+
+        const showStudios = flags.studiot === true || flags["all-types"] === true;
+        const matches = [...byId.values()]
+          .filter((h) => !NOT_FOOTBALL.test((h.title ?? (h.name as string | undefined) ?? "")))
+          .map((h) => {
+            const title = (h.title ?? (h.name as string | undefined) ?? "").trim();
+            const st = h.startTimeUTC ?? 0;
+            const durSec = h.duration ?? 0;
+            return {
+              programId: (h.programId as number | undefined) ?? h.id,
+              title,
+              channel: h.source ?? (h.channel as string | undefined) ?? "",
+              startTimeUTC: st,
+              startTime: h.startTimeFormatted ?? "",
+              durationMinutes: durSec ? Math.round(durSec / 60) : undefined,
+              category: category(title),
+              status: nowSec < st ? "upcoming" : nowSec < st + durSec ? "live" : "past",
+              description: h.description,
+            };
+          })
+          .filter((m) => m.startTimeUTC >= lo && m.startTimeUTC < hi)
+          .filter((m) => showStudios || m.category === "ottelu")
+          .sort((a, b) => a.startTimeUTC - b.startTimeUTC);
+
+        if (json) {
+          output(matches, true);
+        } else if (matches.length === 0) {
+          console.log("Ei jalkapallo-otteluita annetulla aikavälillä.");
+        } else {
+          for (const m of matches) {
+            const live = m.status === "live" ? " 🔴 NYT" : "";
+            const kind = m.category === "studio" ? " (studio)" : "";
+            console.log(`[${m.programId}] ${m.startTime} | ${m.channel} | ${m.title}${kind}${live}`);
+          }
+          console.log(`\n${matches.length} lähetys(tä)`);
         }
         break;
       }

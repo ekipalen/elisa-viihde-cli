@@ -8,6 +8,7 @@ description: Use the Elisa Viihde CLI to browse TV guide, search programs, manag
 ## When to use
 
 Use this skill when the user asks about:
+- Football matches on TV (tonight, overnight, today, tomorrow) → use `elisa jalkapallo`
 - What's on TV today/tomorrow
 - Searching for a specific program or series
 - Movies on TV or in recordings
@@ -17,6 +18,22 @@ Use this skill when the user asks about:
 ## CLI commands
 
 Always use `--json` for structured output. The CLI is at the project root.
+
+### Football matches on TV (dedicated)
+
+```bash
+elisa jalkapallo --json                      # Today (default): today evening + overnight into tomorrow's small hours
+elisa jalkapallo today --json                # Same as default
+elisa jalkapallo tomorrow --json             # Tomorrow's matches (+ its overnight)
+elisa jalkapallo all --json                  # Next ~2 weeks
+elisa jalkapallo --studiot --json            # Also include studio/magazine/preview shows
+```
+
+Returns an array of match broadcasts, each with: `programId`, `title` (e.g. "FIFA World Cup 2026: Canada - Bosnia-Herzegovina"), `channel`, `startTimeUTC`, `startTime` (Finnish local, e.g. "Pe 12.6.2026 21:50"), `durationMinutes`, `category` (`ottelu`/`studio`/`muu`), `status` (`live`/`upcoming`/`past`), `description`. Sorted by start time.
+
+Use this instead of `search` for football: it runs several football queries (FIFA, jalkapallo, leagues), merges them past the search API's 5-hit cap, drops non-football noise (e.g. equestrian "Global Champions League"), and by default shows only actual matches.
+
+**The "today" window is today 00:00 → tomorrow 06:00 Helsinki.** A World Cup in the Americas means matches air late evening / small hours Finnish time, so a match kicking off at e.g. 03:35 (calendar date tomorrow) is part of tonight's football and is returned by the default/`today` query. When the user asks "is there football today", always include these overnight games and state their day + time clearly (the match keeps its real date). Record a match with `elisa record <programId>`.
 
 ### Browse TV guide
 
