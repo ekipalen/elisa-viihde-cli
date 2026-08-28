@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Two-factor authentication (2FA) support: `elisa login --save --two-factor`
+  prompts for the SMS/email verification code. Handles `TWO_FACTOR_REQUIRED` /
+  `EMERGENCY_TWO_FACTOR_REQUIRED` challenges, retries on failed codes, and
+  sends the "remember device" flag.
+
 ## 0.2.0 (2026-04-06)
 
 - TV guide: `guide`, `guide movies`, date and channel filtering

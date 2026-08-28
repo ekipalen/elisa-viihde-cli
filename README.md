@@ -28,6 +28,14 @@ elisa login --save
 
 This authenticates with Elisa Viihde and stores credentials for automatic re-login when the session expires. Alternatively, set `ELISA_EMAIL` and `ELISA_PASSWORD` environment variables.
 
+**Two-factor authentication (2FA):** Elisa now requires a verification code (sent by SMS and email) when logging in. If your account has 2FA enabled, use the `--two-factor` flag so the CLI prompts for the code:
+
+```bash
+elisa login --save --two-factor
+```
+
+It handles the 2FA challenge automatically, retries if the code is rejected, and sends the "remember this device" flag. You only need to enter the code once — after that, `record` / `search` / `guide` work from the saved session until it expires.
+
 ### 3. Install the skill
 
 Copy the included skill to your OpenClaw bot, or point to it:
@@ -84,6 +92,8 @@ Credentials are resolved in order:
 4. Interactive prompts
 
 Credentials are stored with base64 obfuscation (not encryption) at `~/.config/elisa-viihde/config.json` with `0600` permissions. Session data is stored at `~/.config/elisa-viihde/session.json`.
+
+**Two-factor authentication:** `search` and `guide` use public endpoints and need no login. `record`, `scheduled` and `recordings` require an authenticated session. If Elisa prompts for a code during login, pass `--two-factor` (see above) so the CLI asks for it instead of failing.
 
 ## License
 
