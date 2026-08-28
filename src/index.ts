@@ -44,7 +44,7 @@ Commands:
   scheduled [today|tomorrow]           Upcoming scheduled recordings
   jalkapallo [ilta|today|tomorrow|all] Football match broadcasts in a time window
 
-  login [--save]                       Log in (--save stores credentials)
+  login [--save] [--two-factor]        Log in (--save stores credentials; --two-factor prompts for the SMS/email code)
   logout                               Log out
   session                              Show session status
   config set                           Store credentials
@@ -53,6 +53,7 @@ Commands:
 Flags:
 
   --json             Machine-readable JSON output
+  --two-factor       Prompt for the login verification code (SMS/email)
   --all              Include premium/scrambled channels
   --channel <name>   Filter by channel name (guide)
   --rows <n>         Number of search results, default 50
@@ -280,7 +281,13 @@ async function main(): Promise<void> {
     switch (command) {
       case "login": {
         const { email, password } = await resolveCredentials(flags);
-        const session = await authenticate(email, password, verbose);
+        const onTwoFactor = flags.twoFactor === true
+          ? async (): Promise<string> => {
+              const code = await ask("Tunnistautumiskoodi (sähköposti/SMS): ");
+              return code.trim();
+            }
+          : undefined;
+        const session = await authenticate(email, password, verbose, onTwoFactor);
         saveSession(session);
         if (flags.save === true) {
           saveConfig(email, password);

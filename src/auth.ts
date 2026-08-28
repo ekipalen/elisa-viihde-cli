@@ -89,7 +89,8 @@ function log(verbose: boolean, ...args: unknown[]): void {
 export async function authenticate(
   email: string,
   password: string,
-  verbose = false
+  verbose = false,
+  onTwoFactor?: () => Promise<string>
 ): Promise<SessionData> {
   const cookies: CookieStore = new Map();
 
@@ -138,39 +139,98 @@ export async function authenticate(
     throw new AuthenticationError("Step 1 redirect loop exhausted without reaching login page");
   }
 
-  // === Step 2: POST credentials ===
+  // === Step 2: POST credentials (handles two-factor challenge) ===
   log(verbose, "Step 2: Posting credentials...");
 
   const loginUrl = "https://login.id.elisa.fi/api/login/password";
   const loginCookies = getCookieHeader(loginUrl, cookies);
   log(verbose, "  Cookies for login:", loginCookies ? "present" : "none");
 
-  const loginResp = await fetch(loginUrl, {
-    method: "POST",
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      "Content-Type": "application/json",
-      Referer: "https://login.id.elisa.fi/",
-      Origin: "https://login.id.elisa.fi",
-      "User-Agent": "Mozilla/5.0",
-      ...(loginCookies ? { Cookie: loginCookies } : {}),
-    },
-    body: JSON.stringify({ username: email, password }),
-    redirect: "manual",
-  });
+  const loginHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Referer: "https://login.id.elisa.fi/",
+    Origin: "https://login.id.elisa.fi",
+    "User-Agent": "Mozilla/5.0",
+    ...(loginCookies ? { Cookie: loginCookies } : {}),
+  };
 
-  const loginSetCookies = getSetCookies(loginResp);
-  parseCookies(loginSetCookies, loginUrl, cookies);
+  type LoginResponse = {
+    status: string;
+    twoFactorAuthenticationId?: string;
+    emergencyTwoFactorAuthentication?: boolean;
+  };
 
-  if (loginResp.status !== 200) {
-    throw new AuthenticationError(`Login failed with status ${loginResp.status}`);
-  }
+  let twoFactorAuthenticationId = "";
+  let twoFactorAttempts = 0;
 
-  const loginBody = (await loginResp.json()) as { status: string };
-  if (loginBody.status !== "OK") {
+  for (;;) {
+    const payload: Record<string, unknown> = { username: email, password };
+    if (twoFactorAuthenticationId) {
+      const code = onTwoFactor ? await onTwoFactor() : "";
+      if (!code) {
+        throw new AuthenticationError(
+          "Two-factor verification code required (interactive prompt not available)"
+        );
+      }
+      payload.twoFactorAuthenticationId = twoFactorAuthenticationId;
+      payload.smsChallengeCode = code;
+      payload.rememberDevice = true;
+      payload.language = "fi";
+    }
+
+    const loginResp = await fetch(loginUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(30_000),
+      headers: loginHeaders,
+      body: JSON.stringify(payload),
+      redirect: "manual",
+    });
+
+    const loginSetCookies = getSetCookies(loginResp);
+    parseCookies(loginSetCookies, loginUrl, cookies);
+
+    if (loginResp.status !== 200) {
+      throw new AuthenticationError(`Login failed with status ${loginResp.status}`);
+    }
+
+    const loginBody = (await loginResp.json()) as LoginResponse;
+    log(verbose, "  Login status:", loginBody.status);
+
+    if (loginBody.status === "OK") {
+      log(verbose, "  Login OK");
+      break;
+    }
+
+    if (
+      loginBody.status === "TWO_FACTOR_REQUIRED" ||
+      loginBody.status === "EMERGENCY_TWO_FACTOR_REQUIRED"
+    ) {
+      twoFactorAuthenticationId = loginBody.twoFactorAuthenticationId || "";
+      if (!twoFactorAuthenticationId) {
+        throw new AuthenticationError("Two-factor required but no challenge id returned");
+      }
+      log(
+        verbose,
+        "  2FA required, challenge:",
+        twoFactorAuthenticationId.slice(0, 12) + "..."
+      );
+      continue;
+    }
+
+    if (
+      loginBody.status === "TWO_FACTOR_FAILED" ||
+      loginBody.status === "EMERGENCY_TWO_FACTOR_FAILED"
+    ) {
+      twoFactorAttempts++;
+      if (twoFactorAttempts >= 5) {
+        throw new AuthenticationError("Two-factor verification failed repeatedly");
+      }
+      log(verbose, "  2FA code rejected, asking again");
+      continue;
+    }
+
     throw new AuthenticationError(`Login failed with unexpected status: ${loginBody.status}`);
   }
-  log(verbose, "  Login OK");
 
   // === Step 3: Follow OIDC continue redirects to get access_token ===
   log(verbose, "Step 3: Following OIDC continue redirects...");
