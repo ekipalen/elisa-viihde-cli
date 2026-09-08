@@ -325,20 +325,20 @@ export async function authenticate(
   const sessionBody = (await sessionResp.json()) as Record<string, unknown>;
   log(verbose, "  Session created, keys:", Object.keys(sessionBody).join(", "));
 
-  // Extract JSESSIONID from cookies
+  // Extract JSESSIONID from the create-session Set-Cookie header directly.
+  // Elisa sets it here (HttpOnly) and the recording API requires it alongside
+  // the Bearer token; the cookie-jar lookup missed it because of domain matching.
   let jsessionid = "";
-  for (const [domain, jar] of cookies) {
-    if (domainMatch(domain, "elisaviihde.fi")) {
-      const jsid = jar.get("JSESSIONID");
-      if (jsid) {
-        jsessionid = jsid;
-        break;
-      }
+  for (const header of sessionSetCookies) {
+    const m = header.match(/^JSESSIONID=([^;]+)/i);
+    if (m) {
+      jsessionid = m[1].trim();
+      break;
     }
   }
 
   if (!jsessionid) {
-    log(verbose, "  WARNING: No JSESSIONID cookie found");
+    log(verbose, "  WARNING: No JSESSIONID cookie found in create-session response");
   }
 
   const bearerToken = sessionBody.bearerToken as string;
