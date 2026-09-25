@@ -79,13 +79,29 @@ function parseArgs(argv: string[]): {
   let startIdx = command ? cmdIdx + 1 : 0;
   if (subcommand) startIdx = cmdIdx + 2;
 
+  // Lippujen nimet hyvaksytaan seka yhdysviivalla etta camelCasena: --two-factor
+  // ja --twoFactor ovat sama asia. Ilman tata ohjeen mukainen --two-factor
+  // tallentui avaimeksi "two-factor", mutta koodi tarkisti flags.twoFactor,
+  // joten 2FA-kyselya ei koskaan tehty ja login paattyi virheeseen
+  // "Two-factor verification code required (interactive prompt not available)".
+  const setFlag = (key: string, value: string | boolean): void => {
+    flags[key] = value;
+    const osat = key.split("-");
+    if (osat.length > 1) {
+      const camel = osat[0] + osat.slice(1)
+        .map((osa) => osa.charAt(0).toUpperCase() + osa.slice(1))
+        .join("");
+      if (!(camel in flags)) flags[camel] = value;
+    }
+  };
+
   for (let i = 0; i < cmdIdx; i++) {
     const arg = args[i];
     if (arg.startsWith("--")) {
       const key = arg.slice(2);
       const next = args[i + 1];
-      if (next && !next.startsWith("-") && i + 1 < cmdIdx) { flags[key] = next; i++; }
-      else { flags[key] = true; }
+      if (next && !next.startsWith("-") && i + 1 < cmdIdx) { setFlag(key, next); i++; }
+      else { setFlag(key, true); }
     }
   }
 
@@ -94,8 +110,8 @@ function parseArgs(argv: string[]): {
     if (arg.startsWith("--")) {
       const key = arg.slice(2);
       const next = args[i + 1];
-      if (next && !next.startsWith("-")) { flags[key] = next; i++; }
-      else { flags[key] = true; }
+      if (next && !next.startsWith("-")) { setFlag(key, next); i++; }
+      else { setFlag(key, true); }
     } else {
       positional.push(arg);
     }

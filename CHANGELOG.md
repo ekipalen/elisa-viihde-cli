@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fix `--two-factor` never prompting for the verification code. The flag was
+  parsed into the key `two-factor`, but the login path read `flags.twoFactor`,
+  so the code was never asked for and login failed with "Two-factor
+  verification code required (interactive prompt not available)" — the
+  workaround was to know the undocumented `--twoFactor` spelling. Flag names
+  are now normalised, so both `--two-factor` and `--twoFactor` work, along with
+  every other hyphenated flag.
 - Two-factor authentication (2FA) support: `elisa login --save --two-factor`
   prompts for the SMS/email verification code. Handles `TWO_FACTOR_REQUIRED` /
   `EMERGENCY_TWO_FACTOR_REQUIRED` challenges, retries on failed codes, and
